@@ -3,14 +3,17 @@ import * as cheerio from "cheerio";
 import dayjs from "dayjs";
 import { google } from "googleapis";
 
-// Variáveis de ambiente (inseridas via GitHub Secrets)
+// 🗝️ Credenciais e ID da planilha (vêm dos GitHub Secrets)
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const spreadsheetId = process.env.SHEET_ID;
 
+// 📋 Configurações básicas
 const SHEET_NAME = "links";
 const SOURCE_URL = "https://coinmaster-daily.com/pt";
 
-// --- Cria o cliente do Google Sheets ---
+// ==========================================================
+// 🔧 1. Cria cliente Google Sheets
+// ==========================================================
 async function getSheetsClient() {
   const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
   const auth = new google.auth.JWT(
@@ -23,7 +26,9 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-// --- Lê URLs já existentes na planilha ---
+// ==========================================================
+// 📖 2. Lê URLs existentes (para evitar duplicados)
+// ==========================================================
 async function readExistingUrls(sheets) {
   const range = `${SHEET_NAME}!C2:C`; // coluna C = url
   try {
@@ -36,22 +41,37 @@ async function readExistingUrls(sheets) {
     console.log(`🔍 ${set.size} URLs já existentes na planilha.`);
     return set;
   } catch (e) {
-    if (e.response?.status === 400) {
-      // cria cabeçalhos se planilha estiver vazia
+    // Se a aba não existir, cria automaticamente
+    if (e.response?.status === 400 || e.message.includes("Unable to parse range")) {
+      console.log("⚙️ Criando aba 'links'...");
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: { title: SHEET_NAME }
+              }
+            }
+          ]
+        }
+      });
       await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `${SHEET_NAME}!A1:D1`,
         valueInputOption: "RAW",
         requestBody: { values: [["data", "titulo", "url", "fonte"]] }
       });
-      console.log("✅ Planilha criada com cabeçalhos.");
+      console.log("✅ Aba 'links' criada com cabeçalhos.");
       return new Set();
     }
     throw e;
   }
 }
 
-// --- Web Scraper ---
+// ==========================================================
+// 🕷️ 3. Faz o scraping dos links
+// ==========================================================
 async function scrapeLinks() {
   console.log("🌐 Buscando links em:", SOURCE_URL);
 
@@ -72,25 +92,24 @@ async function scrapeLinks() {
   console.log(`🔎 Encontrados ${blocks.length} blocos .fs-collect`);
 
   blocks.each((i, block) => {
-    // Pega todos os <a> dentro de cada bloco
-    $(block)
-      .find("a")
-      .each((_, linkElement) => {
-        let url =
-          $(linkElement).attr("href") ||
-          $(linkElement).attr("data-href") ||
-          $(linkElement).attr("data-url") ||
-          "";
-        url = url.trim();
+    const linkElement = $(block).find("a").first();
+    let url = (linkElement.attr("href") || "").trim();
+    let titulo = (linkElement.text() || "").trim() || "Recompensa";
 
-        let titulo = ($(linkElement).text() || "").trim() || "Recompensa";
+    if (!url) return;
 
-        if (!url || !/^https?:\/\//i.test(url)) return;
-        links.push({ url, titulo });
-      });
+    // Adiciona domínio se o link for relativo
+    if (url.startsWith("/")) {
+      url = `https://coinmaster-daily.com${url}`;
+    }
+
+    // Só aceita links válidos (http ou https)
+    if (!/^https?:\/\//i.test(url)) return;
+
+    links.push({ url, titulo });
   });
 
-  // Remove duplicados dentro da mesma coleta
+  // Remove duplicados
   const seen = new Set();
   const unique = links.filter(l => {
     if (seen.has(l.url)) return false;
@@ -102,7 +121,9 @@ async function scrapeLinks() {
   return unique;
 }
 
-// --- Insere linhas novas na planilha ---
+// ==========================================================
+// 🧾 4. Adiciona os novos links na planilha
+// ==========================================================
 async function appendRows(sheets, rows) {
   if (!rows.length) {
     console.log("🟡 Nenhum link novo para inserir.");
@@ -126,7 +147,9 @@ async function appendRows(sheets, rows) {
   return rows.length;
 }
 
-// --- Execução principal ---
+// ==========================================================
+// 🚀 5. Execução principal
+// ==========================================================
 (async () => {
   try {
     const sheets = await getSheetsClient();
@@ -135,7 +158,7 @@ async function appendRows(sheets, rows) {
 
     const today = dayjs().format("YYYY-MM-DD");
 
-    // Filtra apenas os novos links
+    // Filtra apenas os novos
     const novos = scraped.filter(x => !existing.has(x.url));
 
     const toInsert = novos.map(x => ({
