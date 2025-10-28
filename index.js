@@ -3,6 +3,10 @@ import * as cheerio from "cheerio";
 import { google } from "googleapis";
 import { readFile } from "fs/promises";
 
+
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+const spreadsheetId = process.env.SHEET_ID;
+
 async function run() {
   try {
     const url = "https://coinmaster-daily.com/pt";
@@ -49,3 +53,4 @@ async function run() {
 }
 
 run();
+
