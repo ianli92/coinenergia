@@ -12,7 +12,7 @@ const SHEET_NAME = "links";
 const SOURCE_URL = "https://coinmaster-daily.com/pt";
 
 // ==========================================================
-// 🔧 1. Conecta no Google Sheets
+// 🔧 1. Conecta ao Google Sheets
 // ==========================================================
 async function getSheetsClient() {
   const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -27,10 +27,10 @@ async function getSheetsClient() {
 }
 
 // ==========================================================
-// 📖 2. Lê URLs existentes na planilha (para não repetir)
+// 📖 2. Lê URLs existentes (para evitar duplicados)
 // ==========================================================
 async function readExistingUrls(sheets) {
-  const range = `${SHEET_NAME}!C2:C`; // coluna C = url
+  const range = `${SHEET_NAME}!C2:C`; // Coluna C = url
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -41,7 +41,6 @@ async function readExistingUrls(sheets) {
     console.log(`🔍 ${set.size} URLs já existentes na planilha.`);
     return set;
   } catch (e) {
-    // Se a aba não existir ainda, cria automaticamente
     if (e.response?.status === 400 || e.message.includes("Unable to parse range")) {
       console.log("⚙️ Criando aba 'links'...");
       await sheets.spreadsheets.batchUpdate({
@@ -98,7 +97,7 @@ async function scrapeLinks() {
 
     if (!url) return;
 
-    // Adiciona domínio se o link for relativo (ex: "/?gift=970473")
+    // Adiciona domínio se o link for relativo
     if (url.startsWith("/")) {
       url = `https://coinmaster-daily.com${url}`;
     }
@@ -107,7 +106,6 @@ async function scrapeLinks() {
     const metaBlock = $(block).next(".fs-meta");
     let dataTexto = metaBlock.find(".fs-clicks").first().text().trim();
 
-    // Normaliza a data (YYYY-MM-DD)
     let dataFormatada = "";
     if (dataTexto && /\d{4}-\d{2}-\d{2}/.test(dataTexto)) {
       dataFormatada = dataTexto.match(/\d{4}-\d{2}-\d{2}/)[0];
@@ -115,7 +113,6 @@ async function scrapeLinks() {
       dataFormatada = dayjs().format("YYYY-MM-DD");
     }
 
-    // Só aceita links válidos
     if (!/^https?:\/\//i.test(url)) return;
 
     links.push({ url, titulo, data: dataFormatada });
@@ -134,29 +131,46 @@ async function scrapeLinks() {
 }
 
 // ==========================================================
-// 🧾 4. Escreve novos dados na planilha
+// 🧾 4. Insere novos links no topo da planilha
 // ==========================================================
-async function appendRows(sheets, rows) {
-  if (!rows.length) {
+async function insertNewLinksAtTop(sheets, scraped, existing) {
+  const today = dayjs().format("YYYY-MM-DD");
+
+  const novos = scraped.filter(x => !existing.has(x.url));
+
+  if (novos.length === 0) {
     console.log("🟡 Nenhum link novo para inserir.");
-    return 0;
+    return;
   }
 
-  const range = `${SHEET_NAME}!A:D`;
-  const body = {
-    values: rows.map(r => [r.data, r.titulo, r.url, r.fonte])
-  };
+  console.log(`🆕 Inserindo ${novos.length} novos links no topo...`);
 
-  await sheets.spreadsheets.values.append({
+  const newValues = novos.map(x => [
+    x.data || today,
+    x.titulo,
+    x.url,
+    SOURCE_URL
+  ]);
+
+  // Pega o conteúdo atual da planilha
+  const current = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range,
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: body
+    range: `${SHEET_NAME}!A2:D`
   });
 
-  console.log(`✅ Inseridos ${rows.length} novos links.`);
-  return rows.length;
+  const oldValues = current.data.values || [];
+
+  // Junta novos (em cima) + antigos (embaixo)
+  const allValues = [...newValues, ...oldValues];
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:D`,
+    valueInputOption: "RAW",
+    requestBody: { values: allValues }
+  });
+
+  console.log(`✅ Inseridos ${novos.length} novos links no topo.`);
 }
 
 // ==========================================================
@@ -168,17 +182,7 @@ async function appendRows(sheets, rows) {
     const existing = await readExistingUrls(sheets);
     const scraped = await scrapeLinks();
 
-    // Filtra só os que ainda não existem
-    const novos = scraped.filter(x => !existing.has(x.url));
-
-    const toInsert = novos.map(x => ({
-      data: x.data || dayjs().format("YYYY-MM-DD"),
-      titulo: x.titulo,
-      url: x.url,
-      fonte: SOURCE_URL
-    }));
-
-    await appendRows(sheets, toInsert);
+    await insertNewLinksAtTop(sheets, scraped, existing);
   } catch (err) {
     console.error("❌ ERRO:", err?.message);
     console.error(err?.response?.data || "");
