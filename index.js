@@ -1,56 +1,43 @@
-import axios from "axios";
-import * as cheerio from "cheerio";
-import { google } from "googleapis";
-import { readFile } from "fs/promises";
-
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const spreadsheetId = process.env.SHEET_ID;
 
-async function run() {
-  try {
-    const url = "https://coinmaster-daily.com/pt";
-    const { data } = await axios.get(url);
-    const $ = cheerio.load(data);
+async function main() {
+  const doc = new GoogleSpreadsheet(spreadsheetId);
+  await doc.useServiceAccountAuth(credentials);
+  await doc.loadInfo();
+  
+  const sheet = doc.sheetsByIndex[0]; // primeira aba da planilha
+  await sheet.loadCells();
 
-    // pega todos os links de recompensa
-    const links = [];
-    $("a.btn.btn-primary").each((_, el) => {
-      const href = $(el).attr("href");
-      if (href && href.startsWith("http")) links.push(href);
-    });
+  // Ler links existentes
+  const rows = await sheet.getRows();
+  const existingLinks = rows.map(row => row.Link); // coluna Link
 
-    if (links.length === 0) {
-      console.log("Nenhum link encontrado.");
-      return;
+  // Buscar página
+  const { data } = await axios.get('https://coinmaster-daily.com/pt');
+  const $ = cheerio.load(data);
+
+  // Extrair todos os links das classes .fs-collect
+  const linksOnPage = [];
+  $('.fs-collect').each((i, el) => {
+    const link = $(el).attr('href');
+    if (link && !existingLinks.includes(link) && !linksOnPage.includes(link)) {
+      // Evita links duplicados na página e na planilha
+      linksOnPage.push(link);
     }
+  });
 
-    // autenticação com Google Sheets
-    const credentials = JSON.parse(await readFile("./credenciais.json", "utf8"));
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
-    const sheets = google.sheets({ version: "v4", auth });
-
-    const spreadsheetId = "1RBtgXmVYzILGsF5i8qumo7AVUKKLVAhfvKhnXXQ4hy8";
-    const dataHoje = new Date().toISOString().split("T")[0];
-
-    // adiciona linhas na planilha
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: "A:B",
-      valueInputOption: "RAW",
-      requestBody: {
-        values: links.map((l) => [dataHoje, l]),
-      },
-    });
-
-    console.log(`${links.length} links adicionados em ${dataHoje}`);
-  } catch (err) {
-    console.error("Erro ao executar:", err.message);
+  // Adicionar novos links na planilha
+  for (const link of linksOnPage) {
+    await sheet.addRow({ Link: link });
+    console.log('Adicionado:', link);
   }
+
+  console.log('Todos os links novos foram adicionados!');
 }
 
-run();
-
+main().catch(console.error);
