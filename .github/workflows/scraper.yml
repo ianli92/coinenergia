@@ -1,0 +1,27 @@
+name: Atualizar links CoinMaster
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # executa a cada 1 hora
+  workflow_dispatch:     # permite rodar manualmente também
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Executar scraper
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+        run: node index.js
