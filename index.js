@@ -3,16 +3,16 @@ import * as cheerio from "cheerio";
 import dayjs from "dayjs";
 import { google } from "googleapis";
 
-// 🗝️ Credenciais e ID da planilha (vêm dos GitHub Secrets)
+// 🔐 Credenciais e ID da planilha (via GitHub Secrets)
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const spreadsheetId = process.env.SHEET_ID;
 
-// 📋 Configurações básicas
+// ⚙️ Configurações
 const SHEET_NAME = "links";
 const SOURCE_URL = "https://coinmaster-daily.com/pt";
 
 // ==========================================================
-// 🔧 1. Cria cliente Google Sheets
+// 🔧 1. Conecta no Google Sheets
 // ==========================================================
 async function getSheetsClient() {
   const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -27,7 +27,7 @@ async function getSheetsClient() {
 }
 
 // ==========================================================
-// 📖 2. Lê URLs existentes (para evitar duplicados)
+// 📖 2. Lê URLs existentes na planilha (para não repetir)
 // ==========================================================
 async function readExistingUrls(sheets) {
   const range = `${SHEET_NAME}!C2:C`; // coluna C = url
@@ -41,7 +41,7 @@ async function readExistingUrls(sheets) {
     console.log(`🔍 ${set.size} URLs já existentes na planilha.`);
     return set;
   } catch (e) {
-    // Se a aba não existir, cria automaticamente
+    // Se a aba não existir ainda, cria automaticamente
     if (e.response?.status === 400 || e.message.includes("Unable to parse range")) {
       console.log("⚙️ Criando aba 'links'...");
       await sheets.spreadsheets.batchUpdate({
@@ -70,7 +70,7 @@ async function readExistingUrls(sheets) {
 }
 
 // ==========================================================
-// 🕷️ 3. Faz o scraping dos links
+// 🕷️ 3. Faz o scraping do site CoinMaster Daily
 // ==========================================================
 async function scrapeLinks() {
   console.log("🌐 Buscando links em:", SOURCE_URL);
@@ -98,15 +98,27 @@ async function scrapeLinks() {
 
     if (!url) return;
 
-    // Adiciona domínio se o link for relativo
+    // Adiciona domínio se o link for relativo (ex: "/?gift=970473")
     if (url.startsWith("/")) {
       url = `https://coinmaster-daily.com${url}`;
     }
 
-    // Só aceita links válidos (http ou https)
+    // Pega a data real no bloco .fs-meta logo após o .fs-collect
+    const metaBlock = $(block).next(".fs-meta");
+    let dataTexto = metaBlock.find(".fs-clicks").first().text().trim();
+
+    // Normaliza a data (YYYY-MM-DD)
+    let dataFormatada = "";
+    if (dataTexto && /\d{4}-\d{2}-\d{2}/.test(dataTexto)) {
+      dataFormatada = dataTexto.match(/\d{4}-\d{2}-\d{2}/)[0];
+    } else {
+      dataFormatada = dayjs().format("YYYY-MM-DD");
+    }
+
+    // Só aceita links válidos
     if (!/^https?:\/\//i.test(url)) return;
 
-    links.push({ url, titulo });
+    links.push({ url, titulo, data: dataFormatada });
   });
 
   // Remove duplicados
@@ -122,7 +134,7 @@ async function scrapeLinks() {
 }
 
 // ==========================================================
-// 🧾 4. Adiciona os novos links na planilha
+// 🧾 4. Escreve novos dados na planilha
 // ==========================================================
 async function appendRows(sheets, rows) {
   if (!rows.length) {
@@ -156,13 +168,11 @@ async function appendRows(sheets, rows) {
     const existing = await readExistingUrls(sheets);
     const scraped = await scrapeLinks();
 
-    const today = dayjs().format("YYYY-MM-DD");
-
-    // Filtra apenas os novos
+    // Filtra só os que ainda não existem
     const novos = scraped.filter(x => !existing.has(x.url));
 
     const toInsert = novos.map(x => ({
-      data: today,
+      data: x.data || dayjs().format("YYYY-MM-DD"),
       titulo: x.titulo,
       url: x.url,
       fonte: SOURCE_URL
