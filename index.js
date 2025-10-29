@@ -133,6 +133,7 @@ async function scrapeLinks() {
 // ==========================================================
 // 🧾 4. Insere novos links no topo da planilha
 // ==========================================================
+// Insere novos links no topo e remove os mais antigos se necessário
 async function insertNewLinksAtTop(sheets, scraped, existing) {
   const today = dayjs().format("YYYY-MM-DD");
 
@@ -160,18 +161,23 @@ async function insertNewLinksAtTop(sheets, scraped, existing) {
 
   const oldValues = current.data.values || [];
 
-  // Junta novos (em cima) + antigos (embaixo)
+  // Junta novos links (em cima) + antigos (embaixo)
   const allValues = [...newValues, ...oldValues];
 
+  // Limita a 30 links: mantém os mais recentes e remove os mais antigos
+  const limitedValues = allValues.slice(0, 30);
+
+  // Atualiza a planilha com os novos valores
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_NAME}!A2:D`,
     valueInputOption: "RAW",
-    requestBody: { values: allValues }
+    requestBody: { values: limitedValues }
   });
 
   console.log(`✅ Inseridos ${novos.length} novos links no topo.`);
 }
+
 
 // ==========================================================
 // 🚀 5. Execução principal
@@ -189,3 +195,4 @@ async function insertNewLinksAtTop(sheets, scraped, existing) {
     process.exit(1);
   }
 })();
+
